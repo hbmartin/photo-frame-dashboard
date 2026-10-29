@@ -222,7 +222,7 @@ with the changes this frame forced:
   seconds for `running` or `stopped`. This unit's snapshot was `running`.
 - Logs, the public key, and the rollback copies live in `mi86-adb-v2/` on the card, so an older
   `mi86-adb/started` marker cannot block the run.
-- The script deletes `Frameo_utilities/frameo_utilities.config` as soon as it starts, so the
+- After the root/fingerprint checks, it deletes `Frameo_utilities/frameo_utilities.config`, so the
   task does not fire again. `mi86-adb-v2/started` and `mi86-adb-v2/done` also block a repeat.
 - After replacing the key it sets both TCP properties to 5555, restarts `adbd`, and looks for a
   `LISTEN` state on port 5555 (`15B3` in `/proc/net/tcp` or `tcp6`). A failed check after the
@@ -250,7 +250,7 @@ On the run that worked, `result.txt` contained uid 0, `Base64 implementation: to
 says remote authentication was still untested at that moment. From the computer:
 
 ```sh
-adb connect <frame-ip>:5555
+adb connect "<frame-ip>:5555"
 adb shell id
 ```
 
@@ -296,7 +296,10 @@ also checked. These are host simulations; failure rollback has not been forced o
 ## 7. Undo
 
 Do this from a root shell, or by running a one-shot card script you have read. The copies are on
-the card from the successful run.
+the card from the successful run. These are the SD/ADB changes; application restoration is in
+[section 12](#12-restoring-frameo-and-the-original-webview). Undoing the key or TCP settings can
+end the current connection, so finish application restoration and physical navigation checks
+first.
 
 | Change | Undo |
 | --- | --- |
@@ -304,6 +307,15 @@ the card from the successful run.
 | `service.adb.tcp.port` and `persist.adb.tcp.port` set to `5555` | `setprop` both back to an empty value and `stop adbd` / `start adbd`. Both were empty before |
 | `adbd` restarted | The property undo restarts it again |
 | `frameo_utilities.config` removed from the card | Write the one-line config back when you mean the task to run again. Delete `mi86-adb-v2/started` and `mi86-adb-v2/done` or the script returns immediately |
+
+The table records this unit's original state. For another run, use that run's `attempt.*`
+snapshot: `baseline.state`, `adb_keys.raw`, `metadata`, `selinux`, both saved port properties,
+and `init.svc.adbd`. An `absent` baseline means remove the generated key file; `empty` means
+restore the empty file and its metadata; `present` means restore the exact raw bytes and
+metadata. Restore both port properties to their saved values, including empty values, and
+return `adbd` to its saved running/stopped state. Verify bytes, metadata and properties after
+restoration. A `ROLLBACK FAILED` result requires the retained snapshot for manual recovery;
+do not treat it as successful undo.
 
 ## 8. Verified after access
 
@@ -390,3 +402,149 @@ successful ADB reconnect after reboot required before removal.
   returned no Frameo package. Android also cleaned its private data directory during package
   reconciliation; the complete private-data backup was retained. Shared photo
   directories remained present, and `/system` was read-only. WebView remote debugging was off.
+
+### Build and use the Home-preference helper
+
+The source is [PersistentHome.java](../scripts/dromart-mi86/PersistentHome.java); build it with
+[build_home.py](../scripts/dromart-mi86/build_home.py). Use JDK 17 (`JAVA_HOME`) and an installed
+Android SDK with platform 35 and build-tools 36.1.0. SDK discovery uses `ANDROID_HOME`,
+`ANDROID_SDK_ROOT`, or the normal platform SDK location; `--sdk`, `--platform` and
+`--build-tools` can select an existing installation. The builder downloads nothing and runs
+no device commands.
+
+```sh
+python3 scripts/dromart-mi86/build_home.py --out ./mi86-home-build
+```
+
+The output directory must be new. It contains `persistent-home.jar` and a manifest recording
+source/artifact SHA-256, artifact size and SDK settings. This default output directory is
+ignored by git. The builder verifies the DEX archive and reads back the written artifact.
+No compiled helper or vendor binary is distributed in this PR.
+
+The set/Home-resolution Binder path and UID requirement were exercised on the frame with an
+earlier helper. Persistent clear has not been exercised on hardware. This published revision
+adds fingerprint/candidate guards and a Home-resolution readback check; it is host-tested and
+SDK/d8-compiled, but has not been run on the frame. Its
+[host JVM tests](../scripts/dromart-mi86/test_home.py) run the actual source against Android
+API doubles:
+
+```sh
+python3 scripts/dromart-mi86/test_home.py
+```
+
+Before a device change, obtain the owner's approval, match section 1, keep authenticated ADB
+and a physical Settings route, and save the current Home selection plus a read-only copy of
+`/data/system/users/0/package-restrictions.xml`. That XML is a reference snapshot, not a file
+to restore over a running Package Manager. The helper refuses a different fingerprint and
+requires UID 1000 for `set` and `clear`; root UID 0 can only `inspect`.
+
+Replace `<adb-target>` with the selected ADB device. Copy the locally built jar, make it
+readable to UID 1000, and compare a binary readback before executing it:
+
+```sh
+adb -s "<adb-target>" push ./mi86-home-build/persistent-home.jar /data/local/tmp/mi86-persistent-home.jar
+adb -s "<adb-target>" shell chmod 644 /data/local/tmp/mi86-persistent-home.jar
+adb -s "<adb-target>" exec-out cat /data/local/tmp/mi86-persistent-home.jar > ./mi86-home-build/from-frame.jar
+cmp ./mi86-home-build/persistent-home.jar ./mi86-home-build/from-frame.jar
+adb -s "<adb-target>" shell su 0 env CLASSPATH=/data/local/tmp/mi86-persistent-home.jar app_process /system/bin PersistentHome inspect
+```
+
+Install and configure Home HQ using the [kiosk guide](../dashboard/kiosk/README.md). Enable its
+Home alias and native Menu button:
+
+```sh
+adb -s "<adb-target>" shell am start -n com.wesbos.homehq/.MainActivity --ez home true --ez menu_button true
+```
+
+Physically verify Menu → Android settings → Apps and the Dashboard return before continuing.
+Then set the persistent preference:
+
+```sh
+adb -s "<adb-target>" shell su 1000 env CLASSPATH=/data/local/tmp/mi86-persistent-home.jar app_process /system/bin PersistentHome set
+```
+
+`set` requires `.Home` to be an enabled Home candidate and checks immediate Home resolution.
+Package settings are saved asynchronously: wait for the saved XML's
+`persistent-preferred-activities` section to contain `com.wesbos.homehq/.Home` before rebooting.
+The observed save delay was 10 seconds. If a check fails, keep the existing access route and
+stop before disabling or removing anything. Reboot with Frameo reversibly disabled and
+verify automatic dashboard startup, authenticated ADB, root and physical navigation before
+removing Frameo's backed-up code.
+
+Undo the persistent preference before changing the default Home or uninstalling Home HQ:
+
+```sh
+adb -s "<adb-target>" shell su 1000 env CLASSPATH=/data/local/tmp/mi86-persistent-home.jar app_process /system/bin PersistentHome clear
+```
+
+After the asynchronous save, verify that Home HQ's persistent entry is absent from the XML.
+`clear` requests removal through Package Manager; its return alone does not verify the saved
+file. Home resolution can still be Home HQ through an ordinary preference, so a resolved Home
+of Home HQ is not proof that persistent clear failed. Choose the replacement in Android's
+Home UI and check it after reboot. Do not edit global package XML to force a selection.
+
+## 12. Restoring Frameo and the original WebView
+
+This is a manual restoration procedure, **not hardware-tested recovery**. It depends on your
+own verified pre-change backups. Those contain vendor binaries and private data and are not
+distributed here. Raw partition restoration, USB Loader/Maskrom access and recovery from a
+damaged early boot chain remain untested. No raw image writer is supplied by this PR.
+
+### Required backup contents
+
+Before replacement, preserve complete directories and record per-file sizes, hashes, numeric
+owners/groups, modes, SELinux labels and special-file types:
+
+- Factory `/system/app/Frameo`, and the complete updated code directory reported by
+  `pm path net.frameo.frame`, including native libraries. The recorded update slot was
+  `/data/app/net.frameo.frame-1`; another installation can use a different slot.
+- Complete private data under `/data/data/net.frameo.frame` (the user-0 data view), plus
+  shared photo directories and external app data. Record the original package UID.
+- The entire original `/system/app/webview` directory, including its original native-library
+  and oat layout. A saved `webview.apk` alone is insufficient to undo the library replacement.
+- Home/accessibility/ADB settings as reference snapshots and the ADB enabler's undo files.
+
+Keep Frameo stopped while capturing private data; put Settings in front first so Android does
+not immediately relaunch the current Home app. Verify backup readback before proceeding. The
+device's old tar skipped a long crash-log directory on this unit; use a PAX-aware host tool and
+verify the complete file inventory. FIFO entries are metadata and must not be read as ordinary
+files. Keep all backups out of version control.
+
+### Restore order
+
+1. **Preserve current access.** Confirm identity, authenticated ADB/root and working physical
+   Home HQ Menu/Settings/Dashboard navigation. Verify the selected backup's identity, file
+   inventory, hashes and metadata. Keep Home HQ, its persistent preference and WebView 106
+   available until Frameo works. Stop at any mismatch; obtain missing backups before writing.
+2. **Restore Frameo code.** As root, restore the complete factory directory and the saved
+   updated code directory from the verified backup, preserving their recorded metadata.
+   Remount `/system` writable only for its file restoration, sync and return it read-only.
+   Read back the restored file hashes and metadata before rebooting. Do not restore archived
+   global Package Manager XML. Use the saved update path rather than assuming the `-1` slot.
+3. **Register code and restore data.** Reboot to let Package Manager register the restored
+   APKs. Keep Home HQ as the working Home. Verify Frameo's code paths and versions, then read
+   its assigned UID from `dumpsys package net.frameo.frame`. Keep Frameo disabled/stopped
+   while restoring private data. Extract PAX entries with host tooling and restore selected
+   entries individually; do not rely on the device tar to understand PAX or long names.
+   Remap only entries owned by the saved app UID to the new app UID if it changed, preserving
+   other ownership, modes, labels and file types. Never assume the old app UID is still valid
+   or blanket-change ownership under `/data`. Verify file readback and metadata.
+4. **Prove Frameo works.** Re-enable `net.frameo.frame` and launch its restored MAIN activity,
+   using the component reported by its manifest/Package Manager rather than a component from
+   another firmware. Check photos and settings on the panel. Clear Home HQ's persistent
+   preference using the helper above, verify the saved entry is absent, and select the restored
+   Home in Android's UI. Reboot and check automatic startup, authenticated ADB/root and
+   physical Settings navigation. If any check fails, retain the working launcher and stop.
+5. **Restore WebView only after Frameo works.** Home HQ's dashboard needs the newer provider,
+   so keep a working alternate Home/Settings route during this step. Stop apps using WebView,
+   restore the complete original `/system/app/webview` directory, and remove replacement-only
+   files only after comparing against the verified backup inventory. Preserve the original
+   library/oat layout and metadata; mixing the old APK with the new libraries is incomplete
+   rollback. Sync, remount `/system` read-only, verify files, reboot, and verify the reported
+   WebView version plus Frameo and ADB/root again.
+6. **Remove optional replacements last.** After the preceding checks pass, disable Home HQ's
+   navigation service through Accessibility settings while preserving any other services.
+   Confirm its persistent Home entry remains absent before uninstalling `com.wesbos.homehq`
+   or `amirz.rootless.nexuslauncher`. Recheck the final Home, navigation and ADB after reboot.
+   If also undoing network ADB, perform section 7 last; restoring the original key/port state
+   can intentionally end access from the current computer.
