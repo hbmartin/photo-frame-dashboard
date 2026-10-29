@@ -7,8 +7,10 @@ Serials, MAC addresses, Wi-Fi details and key material are left out; they stay i
 **Short version:** nothing on this frame enumerated over USB, and TCP 5555 was closed. Frameo's
 manufacturer SD utility ran a root shell from the filename of a dummy APK. A second script on the
 same card authorized this computer's ADB key and turned on ADB on port 5555. The connection
-authenticated. The boot image and the other firmware partitions were not written. A reboot was
-not tested, and there is no eMMC backup yet.
+authenticated. The boot image and the other firmware partitions were not written by the SD utility. A later
+session verified root, captured the firmware, installed Home HQ and WebView 106, and reconnected
+authenticated network ADB and root after a reboot. Frameo remains installed and enabled pending
+the physical navigation check and the replacement-only reboot test in section 11.
 
 Match the fingerprint below before using the card. The same filename trick was reported for a
 Frameo 159K and is still unreviewed on that hardware
@@ -92,9 +94,9 @@ Frameo itself, on card insertion, already runs a root command that appends one l
 prefix and keeps the original bytes on the card for undo. The public key and the hostname comment
 inside it stay in the private log.
 
-No factory reset was done. Frameo was left in place. There is no partition backup. Further writes
-(`/system`, disabling Frameo, a kiosk install) wait on a backup and on the usual
-[rules](../README.md#rules-we-learned-the-hard-way).
+No factory reset was done. At the end of the SD-card work, Frameo was left in place and there
+was no partition backup. The later backup and application replacement are recorded in sections
+8 and 11; they follow the usual [rules](../README.md#rules-we-learned-the-hard-way).
 
 ## 4. How the utility runs the script
 
@@ -255,7 +257,8 @@ the address it already had on the LAN. DHCP can change that address.
 
 `persist.adb.tcp.port` was read back as `5555` before any reboot. Whether it is still 5555 after
 a reboot was **not** tested. Until that reboot is confirmed, treat network ADB as a property set
-in the running system. Anyone on the LAN who later gets a line into `adb_keys` gets a shell, and
+in the running system. The later activation reboot in section 8 confirmed persistence. Anyone
+on the LAN who later gets a line into `adb_keys` gets a shell, and
 `su` is on the device, so keep the frame on an isolated network.
 
 The installed key file on this unit was the one public key from the card. Ownership stayed
@@ -275,36 +278,38 @@ the card from the successful run.
 | `adbd` restarted | The property undo restarts it again |
 | `frameo_utilities.config` removed from the card | Write the one-line config back when you mean the task to run again. Delete `mi86-adb-v2/started` and `mi86-adb-v2/done` or the script returns immediately |
 
-## 8. After ADB answers
+## 8. Verified after access
 
-Still open on this unit:
+Later checks on the same unit, 2026-10-28:
 
-- A verified eMMC backup (byte count, SHA-256, gzip readback, a `0xCC` check). The key-file
-  snapshot is the undo for section 6. It is not a firmware backup.
-- Read `su -c id` and, if `-c` is rejected, `su 0 id`. The binary is on disk; the probe did not
-  execute it.
-- Reboot, then `getprop persist.adb.tcp.port` and `adb connect` again.
-- `pm list packages -f` and the WebView version. Neither was recorded. `com.adups.fota` and
-  Rockchip's update receiver both woke on card mount; identify them before the frame goes online.
-- Partition map, RAM, and `ro.config.low_ram`. Unknown here. Do not reuse another RK3126
-  frame's offsets.
-- Launcher, kiosk, and disabling Frameo, only after the backup and after the owner has opened
-  Android Settings → Apps from the panel with Frameo still enabled. Settings were reachable
-  before this work. That check has to be repeated by hand before Frameo is turned off.
+| Check | Observed result |
+| --- | --- |
+| Root | Both `adb shell su 0 id` and `adb shell su -c id` returned uid 0 |
+| SoC | `/proc/device-tree/compatible` is `rockchip,rk3126` |
+| Kernel / RAM | Linux 3.10.0, armv7l; `MemTotal` 1,021,876 KiB |
+| Touch / Wi-Fi | `gslX680`; loaded `aic8800_fdrv` and `aic8800_bsp` modules |
+| Display | 1280×800 at density 160; framebuffer native mode 800×1280 |
+| Vendor layout | `/vendor` links to `/system/vendor`; no separate vendor partition |
+| Network ADB after reboot | Reconnected using the same authorized computer key; `ro.adb.secure=1`, `persist.adb.tcp.port=5555`, root still worked. Runtime `service.adb.tcp.port` was empty after boot, while ADB listened using the persistent setting |
+| Firmware backup | Captured the eMMC prefix through the start of userdata, 1,600,126,976 bytes. Exact length, SHA-256 and gzip readback passed; no aligned `0xCC` filler. Boot, recovery and other static regions matched independent reads |
+| Live-system caveat | The first system capture had changing ext4 journal/counters and SuperSU inode timestamps. File contents matched. A later complete 1,207,959,552-byte system image, with the `daemonsu` init restart loop stopped and system read-only, matched full-partition hashes before and after transfer |
+| Frameo backup | Factory and updated APKs, native libraries, original WebView, shared photo files, settings snapshots and complete Frameo private data saved privately. Static files matched independent live reads; every private regular file matched an independent read |
+| Recovery / restore | USB Loader/Maskrom access and raw partition restoration remain untested. No bootloader, kernel, boot, recovery or resource image was written |
+
+The old Android tar skipped a long crash-log directory. A host-created PAX archive of all private
+app-data entries supplements the larger archive, including named FIFOs as metadata. Frameo must
+be stopped while that snapshot is taken. First put Android Settings in front: force-stopping the
+current Home app while it is in front caused Android to launch it again. Keep vendor APKs,
+private data, keys and firmware images in the ignored backup/diagnostics directories.
 
 ## 9. Guesses
 
-- The SoC is an RK3126. The evidence is `ro.board.platform=rk312x`, `ro.hardware=rk30board`, and
-  the FOTA string `RK3126_6.0`, which is the same family as the other rk312x frames in the
-  [device index](devices.md). No loader chip id and no board photo.
 - The single high TCP port belonged to Frameo. The Denver PFF-1024BMK2, on Frameo v1.32.16, had
   one high port owned by `net.frameo.frame` and no listeners once Frameo was disabled. The owner
   of this unit's port was not read from `/proc`.
 - USB data is missing because of the cable, the connector, or the gadget configuration. The log
   showed USB debugging enabled and the kernel gadget disconnected. That does not choose among
   those causes.
-- `persist.adb.tcp.port` will still be 5555 after a reboot, because that is what the property is
-  for on other frames in this repo. This unit has not been rebooted to check.
 
 ## 10. Another unit
 
@@ -312,3 +317,40 @@ Send the fingerprint, both Frameo versionCodes, whether `mi86-probe.txt` shows u
 `Base64 implementation:` line `result.txt` printed. Leave out the serial, MAC, IP, volume id, and
 the key file. A different fingerprint or a different versionCode check is a different frame:
 stop and write that down, including a failed probe.
+
+## 11. Launcher and dashboard replacement (in progress)
+
+The owner authorized replacement of Frameo after backup, with a working replacement and a
+successful ADB reconnect after reboot required before removal.
+
+- Installed Home HQ from this repository, minimum API 23 / target 28, using the installed
+  compile SDK 35 and build-tools 36.1.0 in an isolated build directory. The dashboard, fonts,
+  and 24 sample photos are bundled in the APK at `http://127.0.0.1:8765/`. It uses the repo's
+  demo data; no live calendar, weather or family account was connected.
+- All seven dashboard views rendered on the frame, fonts loaded, and the displayed sample
+  images had nonzero decoded dimensions. The local adaptation changes `App.img` to use bundled
+  JPEG files instead of Picsum URLs.
+- The factory Launcher3 manifest has MAIN with DEFAULT and MONKEY categories, with HOME
+  removed. Enabling its package does not make it an ordinary Home option. Installed the pinned
+  Rootless Pixel Launcher 3.9.1 from the F-Droid URL and SHA-256 in `biuframe-setup.sh` instead.
+  Its Home screen and the floating Home HQ navigation overlay were visually checked.
+- WebView 44 was replaced with the repo-pinned LineageOS WebView 106.0.5249.126, including its
+  three ARM native libraries in `lib/arm`; the original APK also remains as `webview.apk.bak`.
+  All installed files matched their host hashes, and system was remounted read-only. Home HQ
+  failed to initialize before reboot while Android still had the old package metadata; it
+  started successfully once the reboot activated WebView 106.
+- Selected Home HQ with **Always** in Android's Home chooser, and verified the saved
+  `preferred-activities` entry plus repeated Home-key returns. Package settings are saved
+  asynchronously: an immediate XML read was stale. Wait before rebooting.
+- Enabled the native Menu button and Home HQ navigation service, with its optional
+  WRITE_SECURE_SETTINGS grant. Back and Dashboard controls appear outside Home HQ.
+- A second reboot reconnected authenticated ADB and root, but reopened the Home chooser. Boot
+  logs show the firmware adding a preferred `net.frameo.frame/.ui.activities.AFirstScreen`
+  entry, then removing it as dangling. The saved Home HQ alias remained enabled, but its
+  preferred entry was cleared. Home HQ was selected again afterward. Automatic dashboard
+  startup is therefore **not yet verified**; repeat the test with Frameo reversibly disabled
+  after the physical navigation check.
+- **Pending:** owner must physically open Menu → Android settings → Apps and return with
+  Dashboard before Frameo is disabled. Then test a reboot with Frameo disabled and verify
+  authenticated ADB, root, automatic Home HQ startup and navigation before removing its code.
+  Frameo is currently still installed and enabled; no Frameo APK or photo was removed.
