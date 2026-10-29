@@ -197,14 +197,21 @@ private diagnostics folder.
 
 This is a write: one file under `/data/misc/adb/`, two properties, and an `adbd` restart. It
 needs the owner's approval for that write. Do it only after the probe's `id` line is root and
-the fingerprint still matches.
+the fingerprint still matches. The enabler also enforces the exact fingerprint from section 1:
+a failed property read, empty value or mismatch aborts before taking a device snapshot,
+staging key files, changing properties or restarting ADB. There is no override. Rejection can
+still create the card's `started` marker and `result.txt`; inspect that result before retrying.
 
 The script is [`scripts/dromart-mi86/enable-adb.sh`](../scripts/dromart-mi86/enable-adb.sh)
-(16,420 bytes, SHA-256 `701a03c339f4c9f8030c0e1e87be99d3e424b0b0d8892a3edc905ff9cc179f7d`).
+(16,869 bytes, SHA-256 `559c4107f2a0e08e918eda2cbdbab03dca6b7cc6587fc4db7bdccab45e4d73db`).
 It is the upstream `p_frameo_jb` template
 ([blob `479eca15adf773080c792be0e481e72723945936`](https://github.com/dusty-du/frameo-159k-jailbreak-builder/blob/479eca15adf773080c792be0e481e72723945936/templates/p_frameo_jb))
 with the changes this frame forced:
 
+- The current revision requires an exact `ro.build.fingerprint` match before device changes.
+  The successful hardware run described below used an earlier revision. The fingerprint
+  guard and failure paths are covered by host tests; this revision has not been rerun on the
+  frame.
 - Android 6 has no `base64` command. AOSP builds the applet into toybox and ships no `base64`
   alias. The script self-tests `aGk=` → `hi` with standalone `base64`, then `toybox base64`,
   then `busybox base64`, and keeps the decoder's stderr. This unit printed
@@ -266,6 +273,25 @@ The installed key file on this unit was the one public key from the card. Owners
 uid 1000, gid 2000, mode 640, label `u:object_r:adb_keys_file:s0` (system:shell, the mode Frameo
 had just set). The previous file's only line was the comma-prefixed vendor line, so the cleaned
 baseline was empty. The original bytes are on the card at `mi86-adb-v2/adb_keys.before`.
+
+### Host regression tests
+
+Run the [mocked-command tests](../scripts/dromart-mi86/test_enable_adb.py) with Python 3 and
+Bash or mksh:
+
+```sh
+python3 scripts/dromart-mi86/test_enable_adb.py
+```
+
+The harness executes the production shell script with only its key/listener paths redirected
+into a temporary directory. All external commands are mocked, with no fallback to host tools.
+It uses synthetic public keys and needs no ADB, root, Android SDK, network or connected frame.
+
+Coverage includes fingerprint rejection, absent/empty/existing key files, concurrent edits,
+rename failures before and after replacement, property and daemon failures, failed byte and
+metadata readback, listener timeout, original stopped-daemon restoration, and failed rollback
+reporting with recovery snapshots retained. Source pins and repeated-trigger behavior are
+also checked. These are host simulations; failure rollback has not been forced on hardware.
 
 ## 7. Undo
 

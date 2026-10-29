@@ -24,10 +24,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 PROBE = HERE / "probe.sh"
 ENABLE = HERE / "enable-adb.sh"
-# Pins of the scripts that ran on the unit in docs/dromart-mi86.md.
+# Pins of the reviewed sources staged by this tool; hardware coverage is in the doc.
 EXPECTED = {
     PROBE: "421ffd9c25a9ecb74a2fcf7cafbe31bcaff537d38bf73fcadf2f8d8927913c62",
-    ENABLE: "701a03c339f4c9f8030c0e1e87be99d3e424b0b0d8892a3edc905ff9cc179f7d",
+    ENABLE: "559c4107f2a0e08e918eda2cbdbab03dca6b7cc6587fc4db7bdccab45e4d73db",
 }
 CONFIG = "auto_run=action_update_version\n"
 APK_NAME = (

@@ -8,6 +8,7 @@ card=$(dirname "$0")
 d="$card/mi86-adb-v2"
 out="$d/result.txt"
 keys=/data/misc/adb/adb_keys
+expected_fingerprint='rockchip/rk312x/rk312x:6.0.1/MXC89K/user.zcx.20250822.060141:user/release-keys'
 
 # Check before opening result.txt: repeated triggers preserve the first result.
 [ -e "$d/done" ] && exit 0
@@ -24,12 +25,16 @@ main() {
   label=
   date
   id
+  [ "$(id -u)" = 0 ] || fail 'root is required'
+  fingerprint=$(getprop ro.build.fingerprint) || fail 'cannot read firmware fingerprint'
+  printf 'ro.build.fingerprint=%s\n' "$fingerprint"
+  [ "$fingerprint" = "$expected_fingerprint" ] \
+    || fail 'firmware fingerprint mismatch; no device configuration changes made'
   echo '--- existing ADB security and network properties ---'
   for prop in ro.adb.secure ro.secure ro.debuggable dhcp.wlan0.ipaddress; do
     printf '%s=' "$prop"
     getprop "$prop"
   done
-  [ "$(id -u)" = 0 ] || fail 'root is required'
   for required_tool in stat ls cp cmp mktemp chown chmod chcon getprop setprop stop start sync od tr cat; do
     command -v "$required_tool" >/dev/null 2>&1 || fail "required Android tool unavailable: $required_tool"
   done
@@ -143,8 +148,10 @@ main() {
       [ ! -e "$keys" ] || fail 'active key path appeared before replacement'
       ;;
     empty)
-      [ -f "$keys" ] && [ ! -s "$keys" ] && check_metadata "$keys" \
-        || fail 'empty key baseline changed before replacement'
+      if [ ! -f "$keys" ] || [ -s "$keys" ]; then
+        fail 'empty key baseline changed before replacement'
+      fi
+      check_metadata "$keys" || fail 'empty key baseline changed before replacement'
       ;;
     present)
       cmp -s "$keys" "$attempt/adb_keys.raw" || fail 'active keys changed before replacement'
@@ -332,7 +339,7 @@ wait_state() {
 verify_listener() {
   for listener_table in /proc/net/tcp /proc/net/tcp6; do
     [ -r "$listener_table" ] || continue
-    while read -r listener_slot listener_local listener_remote listener_state listener_rest; do
+    while read -r _listener_slot listener_local _listener_remote listener_state _listener_rest; do
       [ "$listener_state" = 0A ] || continue
       case "$listener_local" in *:15B3) return 0 ;; esac
     done < "$listener_table"
