@@ -1,23 +1,23 @@
 # Dromart MI86 (Frameo, rk312x, Android 6.0.1): root and network ADB from an SD card
 
 Record of one unit, 2026-10-28, macOS host. Observations are kept separate from guesses.
-Serials, MAC addresses, Wi-Fi details and key material are left out; they stay in the ignored
-`diagnostics/dromart-mi86/` folder.
+Serials, MAC addresses, network addresses, Wi-Fi details and key material are omitted.
 
 **Short version:** nothing on this frame enumerated over USB, and TCP 5555 was closed. Frameo's
 manufacturer SD utility ran a root shell from the filename of a dummy APK. A second script on the
 same card authorized this computer's ADB key and turned on ADB on port 5555. The connection
 authenticated. The boot image and the other firmware partitions were not written by the SD utility. A later
 session verified root, captured the firmware, installed Home HQ and WebView 106, and reconnected
-authenticated network ADB and root after a reboot. Frameo remains installed and enabled pending
-the physical navigation check and the replacement-only reboot test in section 11.
+authenticated network ADB and root after a reboot. After physical navigation and automatic
+dashboard startup were verified, Frameo was removed. A final reboot confirmed Home HQ startup
+and authenticated ADB with root, as recorded in section 11.
 
 Match the fingerprint below before using the card. The same filename trick was reported for a
 Frameo 159K and is still unreviewed on that hardware
 ([#126](https://github.com/wesbos/photo-frame-dashboard/issues/126)). This page is the MI86.
 
-Checked on 2026-10-28: no open issue or pull request named this device. The mechanism is the one
-in [dusty-du/frameo-159k-jailbreak-builder](https://github.com/dusty-du/frameo-159k-jailbreak-builder),
+The mechanism is the one in
+[dusty-du/frameo-159k-jailbreak-builder](https://github.com/dusty-du/frameo-159k-jailbreak-builder),
 from [this comment on #126](https://github.com/wesbos/photo-frame-dashboard/issues/126#issuecomment-6460047808).
 That report was a 159K, RK3326, Android 8.1, Frameo 1.30.19. The script published here is the
 Android 6 adaptation that ran on this MI86.
@@ -30,8 +30,8 @@ unused.
 | | |
 | --- | --- |
 | About / Support | Frameo. Support screen showed 1280×800 |
-| Running Frameo | `net.frameo.frame` **v1.32.16\_-\_OTA_test**, versionCode **80321**, under `/data/app` |
-| Factory Frameo | v1.27.5, versionCode **54800**, `/system/app/Frameo`. A photographed manufacturer task during the first probe showed 1.27.5 while the updated package was already on the device |
+| Frameo before replacement | `net.frameo.frame` **v1.32.16\_-\_OTA_test**, versionCode **80321**, under `/data/app` |
+| Factory Frameo before replacement | v1.27.5, versionCode **54800**, `/system/app/Frameo`. A photographed manufacturer task during the first probe showed 1.27.5 while the updated package was already on the device |
 | Firmware | `wifi photo frame_20250822` |
 | Fingerprint | `rockchip/rk312x/rk312x:6.0.1/MXC89K/user.zcx.20250822.060141:user/release-keys` |
 | Brand / model | `ro.product.brand=BND`, `ro.product.model=wifi photo frame` |
@@ -165,18 +165,19 @@ leave the first log alone.
 Stage a directory (this does not touch a card):
 
 ```sh
-python3 -I scripts/dromart-mi86/prepare_card.py --mode probe --out /tmp/mi86-card
+python3 -I scripts/dromart-mi86/prepare_card.py --mode probe --out ./mi86-card
 ```
 
 Copy the staged files to the FAT32 root. On the Mac used here, `cp -X` avoids new AppleDouble
 files. Then check there is still one APK, and eject from Finder.
 
 ```sh
-cp -X -R /tmp/mi86-card/. /Volumes/FRAMECARD/
-dot_clean -m /Volumes/FRAMECARD
-find /Volumes/FRAMECARD/Frameo_utilities -name '*.apk' -o -name '._*'
+cp -X -R ./mi86-card/. "<card-mount-point>/"
+dot_clean -m "<card-mount-point>"
+find "<card-mount-point>/Frameo_utilities" -name '*.apk' -o -name '._*'
 ```
 
+Replace `<card-mount-point>` with the mounted card's location before running these commands.
 Boot Frameo, open Settings, insert the card, wait for the task, tap **COMPLETE TASK**, shut the
 frame down, and read the card on the computer.
 
@@ -224,7 +225,7 @@ Put the computer's **public** key on the card. `~/.android/adbkey` stays on the 
 
 ```sh
 python3 -I scripts/dromart-mi86/prepare_card.py --mode adb --replace \
-  --pubkey "$HOME/.android/adbkey.pub" --out /tmp/mi86-card
+  --pubkey "$HOME/.android/adbkey.pub" --out ./mi86-card
 ```
 
 `--replace` overwrites `p_frameo_jb`, the config, and the utility APK in that directory. Copy to
@@ -255,9 +256,9 @@ computer's key was not tried.
 `getprop dhcp.wlan0.ipaddress` was empty while the script ran. The frame was still reached at
 the address it already had on the LAN. DHCP can change that address.
 
-`persist.adb.tcp.port` was read back as `5555` before any reboot. Whether it is still 5555 after
-a reboot was **not** tested. Until that reboot is confirmed, treat network ADB as a property set
-in the running system. The later activation reboot in section 8 confirmed persistence. Anyone
+`persist.adb.tcp.port` was read back as `5555` before any reboot. The later activation reboot
+in section 8 confirmed persistence. Until a reboot is confirmed on another unit, treat network
+ADB as a property set in the running system. Anyone
 on the LAN who later gets a line into `adb_keys` gets a shell, and
 `su` is on the device, so keep the frame on an isolated network.
 
@@ -293,14 +294,14 @@ Later checks on the same unit, 2026-10-28:
 | Network ADB after reboot | Reconnected using the same authorized computer key; `ro.adb.secure=1`, `persist.adb.tcp.port=5555`, root still worked. Runtime `service.adb.tcp.port` was empty after boot, while ADB listened using the persistent setting |
 | Firmware backup | Captured the eMMC prefix through the start of userdata, 1,600,126,976 bytes. Exact length, SHA-256 and gzip readback passed; no aligned `0xCC` filler. Boot, recovery and other static regions matched independent reads |
 | Live-system caveat | The first system capture had changing ext4 journal/counters and SuperSU inode timestamps. File contents matched. A later complete 1,207,959,552-byte system image, with the `daemonsu` init restart loop stopped and system read-only, matched full-partition hashes before and after transfer |
-| Frameo backup | Factory and updated APKs, native libraries, original WebView, shared photo files, settings snapshots and complete Frameo private data saved privately. Static files matched independent live reads; every private regular file matched an independent read |
+| Frameo backup | Factory and updated APKs, native libraries, original WebView, shared photo paths, settings snapshots and complete Frameo private data backed up. Static files matched independent live reads; every private regular file matched an independent read |
 | Recovery / restore | USB Loader/Maskrom access and raw partition restoration remain untested. No bootloader, kernel, boot, recovery or resource image was written |
 
 The old Android tar skipped a long crash-log directory. A host-created PAX archive of all private
 app-data entries supplements the larger archive, including named FIFOs as metadata. Frameo must
 be stopped while that snapshot is taken. First put Android Settings in front: force-stopping the
 current Home app while it is in front caused Android to launch it again. Keep vendor APKs,
-private data, keys and firmware images in the ignored backup/diagnostics directories.
+private data, keys and firmware images out of version control.
 
 ## 9. Guesses
 
@@ -318,18 +319,16 @@ Send the fingerprint, both Frameo versionCodes, whether `mi86-probe.txt` shows u
 the key file. A different fingerprint or a different versionCode check is a different frame:
 stop and write that down, including a failed probe.
 
-## 11. Launcher and dashboard replacement (in progress)
+## 11. Launcher and dashboard replacement
 
 The owner authorized replacement of Frameo after backup, with a working replacement and a
 successful ADB reconnect after reboot required before removal.
 
-- Installed Home HQ from this repository, minimum API 23 / target 28, using the installed
-  compile SDK 35 and build-tools 36.1.0 in an isolated build directory. The dashboard, fonts,
-  and 24 sample photos are bundled in the APK at `http://127.0.0.1:8765/`. It uses the repo's
-  demo data; no live calendar, weather or family account was connected.
+- Installed Home HQ from this repository, minimum API 23 / target 28, using compile SDK 35
+  and build-tools 36.1.0. It displayed the repo's demo data; no live calendar, weather or
+  family account was connected.
 - All seven dashboard views rendered on the frame, fonts loaded, and the displayed sample
-  images had nonzero decoded dimensions. The local adaptation changes `App.img` to use bundled
-  JPEG files instead of Picsum URLs.
+  images had nonzero decoded dimensions.
 - The factory Launcher3 manifest has MAIN with DEFAULT and MONKEY categories, with HOME
   removed. Enabling its package does not make it an ordinary Home option. Installed the pinned
   Rootless Pixel Launcher 3.9.1 from the F-Droid URL and SHA-256 in `biuframe-setup.sh` instead.
@@ -339,18 +338,29 @@ successful ADB reconnect after reboot required before removal.
   All installed files matched their host hashes, and system was remounted read-only. Home HQ
   failed to initialize before reboot while Android still had the old package metadata; it
   started successfully once the reboot activated WebView 106.
-- Selected Home HQ with **Always** in Android's Home chooser, and verified the saved
-  `preferred-activities` entry plus repeated Home-key returns. Package settings are saved
-  asynchronously: an immediate XML read was stale. Wait before rebooting.
 - Enabled the native Menu button and Home HQ navigation service, with its optional
-  WRITE_SECURE_SETTINGS grant. Back and Dashboard controls appear outside Home HQ.
-- A second reboot reconnected authenticated ADB and root, but reopened the Home chooser. Boot
-  logs show the firmware adding a preferred `net.frameo.frame/.ui.activities.AFirstScreen`
-  entry, then removing it as dangling. The saved Home HQ alias remained enabled, but its
-  preferred entry was cleared. Home HQ was selected again afterward. Automatic dashboard
-  startup is therefore **not yet verified**; repeat the test with Frameo reversibly disabled
-  after the physical navigation check.
-- **Pending:** owner must physically open Menu → Android settings → Apps and return with
-  Dashboard before Frameo is disabled. Then test a reboot with Frameo disabled and verify
-  authenticated ADB, root, automatic Home HQ startup and navigation before removing its code.
-  Frameo is currently still installed and enabled; no Frameo APK or photo was removed.
+  WRITE_SECURE_SETTINGS grant. Back and Dashboard controls appear outside Home HQ. The owner
+  physically opened Menu → Android settings → Apps and returned with Dashboard successfully.
+- This firmware overwrites the ordinary Home preference at boot, even with Frameo disabled:
+  logs show it adding `net.frameo.frame/.ui.activities.AFirstScreen` and removing that entry as
+  dangling. Choosing Home HQ with **Always** therefore does not survive a restart reliably.
+  Setting a persistent preferred activity through PackageManager's
+  `addPersistentPreferredActivity` API instead resolved MAIN / HOME / DEFAULT to
+  `com.wesbos.homehq/.Home`, user 0. Android 6 requires the caller to be **system UID 1000**;
+  root UID 0 alone is rejected. No device-owner policy or framework patch was installed.
+- Package settings are written asynchronously. Wait for the entry to appear under
+  `persistent-preferred-activities` in `/data/system/users/0/package-restrictions.xml` before
+  rebooting; the observed delay was 10 seconds. The persistent preference must be cleared
+  with `clearPackagePersistentPreferredActivities("com.wesbos.homehq", 0)` as UID 1000 before
+  selecting a different default Home or removing Home HQ.
+- With Frameo reversibly disabled, a reboot launched Home HQ directly, rendered the
+  dashboard, retained the navigation service, and reconnected authenticated ADB with root in
+  50.6 seconds. The boot log's initial HOME launch was Home HQ, with no chooser interaction.
+- After that successful check, removed only the backed-up factory `/system/app/Frameo` and
+  updated `/data/app/net.frameo.frame-1` code directories. Shared photo paths were not deleted.
+  A final reboot again launched Home HQ directly and rendered the dashboard, with authenticated
+  ADB, root, secure ADB authorization, the persistent Home preference and accessibility service
+  enabled. Both APK directories were absent; `pm path` and package listings, including `-u`,
+  returned no Frameo package. Android also cleaned its private data directory during package
+  reconciliation; the complete private-data backup was retained. Shared photo
+  directories remained present, and `/system` was read-only. WebView remote debugging was off.
